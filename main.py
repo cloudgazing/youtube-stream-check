@@ -89,18 +89,27 @@ def channel_data(channel_url):
 def get_ids(data):
     video_ids = []
     index = 0
-    def is_stream(data, i):
+
+    def is_scheduled(data, index):
         try:
-            runs_list = data['contents']['twoColumnBrowseResultsRenderer']['tabs'][3]['tabRenderer']['content']['richGridRenderer']['contents'][i]['richItemRenderer']['content']['videoRenderer']['viewCountText']['runs'] 
-            # parsing json for data that tells us a stream is scheduled or live
-            status = [value for value in runs_list[-1].values()][0].split()[-1]
-            if status == 'waiting' or status == 'watching':
+            event_data = data['contents']['twoColumnBrowseResultsRenderer']['tabs'][3]['tabRenderer']['content']['richGridRenderer']['contents'][index]['richItemRenderer']['content']['videoRenderer']['upcomingEventData']
+            if event_data:
                 return True
         except:
             return False
         return False
 
-    while is_stream(data, index):
+    def is_live(data, index):
+        try:
+            runs_list = data['contents']['twoColumnBrowseResultsRenderer']['tabs'][3]['tabRenderer']['content']['richGridRenderer']['contents'][index]['richItemRenderer']['content']['videoRenderer']['viewCountText']['runs']
+            status = [value for value in runs_list[-1].values()][0].split()[-1]
+            if status == 'watching':
+                return True
+        except:
+            return False
+        return False
+
+    while is_scheduled(data, index) or is_live(data, index):
         video_ids.append(data['contents']['twoColumnBrowseResultsRenderer']['tabs'][3]['tabRenderer']['content']['richGridRenderer']['contents'][index]['richItemRenderer']['content']['videoRenderer']['videoId'])
         index += 1
 
@@ -134,9 +143,9 @@ def is_online(video_id):
     try:
         is_live = data['videoDetails']['isLiveContent']
     except:
-        return False
+        is_live = False
 
-    return True if is_live == 'true' else False
+    return is_live
 
 def video_length(video_id):
     video_url = f'https://youtube.com/watch?v={video_id}'
