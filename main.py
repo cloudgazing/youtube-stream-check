@@ -2,6 +2,7 @@ import argparse
 import json
 import re
 import sys
+# import time
 import urllib.request
 from datetime import datetime, timedelta
 
@@ -58,9 +59,9 @@ class Stream:
         hours, minutes, _ = str(time_difference).split(':')
         return f'{hours} hours and {minutes} minutes'
 
-    def same_info(self, other):
+    def same_stream(self, stream):
         for attr in self.__dict__:
-            if getattr(self, attr) != getattr(other, attr):
+            if getattr(self, attr) != getattr(stream, attr):
                 return False
         return True
 
@@ -68,6 +69,87 @@ class Stream:
         print(f'Stream with ID {self.video_id} has been updated\n')
         print(stream)
         return stream
+    
+def page_contents(url):
+    header = {'Accept-Language': 'en-US'}
+    request = urllib.request.Request(url, headers=header)
+    response = urllib.request.urlopen(request)
+
+    return str(response.read().decode())
+
+def channel_data(channel_url):
+    contents = page_contents(channel_url)
+
+    pattern = r'<script nonce="[-\w]+">var ytInitialData = (.*);</script>'
+    j = re.search(pattern, contents)
+    data = json.loads(j.group(1)) if j else sys.exit('json error in channel_data')
+
+    return data
+
+def get_ids(data):
+    video_ids = []
+    index = 0
+    def is_stream(data, i):
+        try:
+            runs_list = data['contents']['twoColumnBrowseResultsRenderer']['tabs'][3]['tabRenderer']['content']['richGridRenderer']['contents'][i]['richItemRenderer']['content']['videoRenderer']['viewCountText']['runs'] 
+            # parsing json for data that tells us a stream is scheduled or live
+            status = [value for value in runs_list[-1].values()][0].split()[-1]
+            if status == 'waiting' or status == 'watching':
+                return True
+        except:
+            return False
+        return False
+
+    while is_stream(data, index):
+        video_ids.append(data['contents']['twoColumnBrowseResultsRenderer']['tabs'][3]['tabRenderer']['content']['richGridRenderer']['contents'][index]['richItemRenderer']['content']['videoRenderer']['videoId'])
+        index += 1
+
+    return video_ids
+
+def stream_from_id(video_id):
+    url = f'https://youtube.com/watch?v={video_id}'
+    contents = page_contents(url)
+
+    pattern = r'<script nonce="[-\w]+">var ytInitialPlayerResponse = (.*);</script>'
+    j = re.search(pattern, contents)
+    data = json.loads(j.group(1)) if j else sys.exit(f'Could not get video data from id {video_id}')
+
+    status = 'live' if data['playabilityStatus']['status'] == 'OK' else 'scheduled'
+    video_id = data['videoDetails']['videoId']
+    title = data['videoDetails']['title']
+    description = data['videoDetails']['shortDescription']
+    thumbnail = data['videoDetails']['thumbnail']['thumbnails'][4]['url']
+    time_iso = None if status == 'live' else data['microformat']['playerMicroformatRenderer']['liveBroadcastDetails']['startTimestamp']
+
+    return Stream(status, video_id, title, description, thumbnail, time_iso)
+
+def is_online(video_id):
+    video_url = f'https://www.youtube.com/watch?v={video_id}'
+    page = page_contents(video_url)
+
+    pattern = r'<script nonce="[-\w]+">var ytInitialPlayerResponse = (.*);</script>'
+    j = re.search(pattern, page)
+    data = json.loads(j.group(1)) if j else sys.exit('json error in is_online')
+
+    try:
+        is_live = data['videoDetails']['isLiveContent']
+    except:
+        return False
+
+    return True if is_live == 'true' else False
+
+def video_length(video_id):
+    video_url = f'https://youtube.com/watch?v={video_id}'
+    page = page_contents(video_url)
+
+    pattern = r'<script nonce="[-\w]+">var ytInitialPlayerResponse = (.*);</script>'
+    j = re.search(pattern, page)
+    data = json.loads(j.group(1)) if j else sys.exit('json error in video_length')
+
+    seconds = data['videoDetails']['lengthSeconds']
+    time_obj = timedelta(seconds=seconds)
+
+    return f'{f"{time_obj.days} days " if time_obj.days else ""}{time_obj}'
 
 def valid_url(value, arg):
     if arg == 'handle':
@@ -90,143 +172,65 @@ def valid_url(value, arg):
 
     return url
 
-def site_contents(url):
-    header = {'Accept-Language': 'en-US'}
-    request = urllib.request.Request(url, headers=header)
-    response = urllib.request.urlopen(request)
-
-    return str(response.read().decode())
-
-def get_data(url):
-    page = site_contents(url)
-
-    pattern = r'<script nonce="[-\w]+">var ytInitialData = (.*);</script>'
-    j = re.search(pattern, page)
-    data = json.loads(j.group(1)) if j else sys.exit('!!JSON LOADS ERROR!!')
-
-    return data
-
-def get_ids(data):
-    video_ids = []
-    index = 0
-    def is_stream(data, i):
-        try:
-            status = data['contents']['twoColumnBrowseResultsRenderer']['tabs'][3]['tabRenderer']['content']['richGridRenderer']['contents'][i]['richItemRenderer']['content']['videoRenderer']['viewCountText']['runs'][1]['text']
-            if status == ' watching' or status == ' waiting':
-                return True
-        except:
-            return False
-        return True
-
-    while is_stream(data, index):
-        video_ids.append(data['contents']['twoColumnBrowseResultsRenderer']['tabs'][3]['tabRenderer']['content']['richGridRenderer']['contents'][index]['richItemRenderer']['content']['videoRenderer']['videoId'])
-        index += 1
-
-    return video_ids
-
-def is_stream(video_id):
-    url = f'https://www.youtube.com/watch?v={video_id}'
-    page = site_contents(url)
-
-    pattern = r'<script nonce="[-\w]+">var ytInitialPlayerResponse = (.*);</script>'
-    j = re.search(pattern, page)
-    data = json.loads(j.group(1)) if j else sys.exit('!!JSON LOADS ERROR!!')
-
-    try:
-        is_live = data['videoDetails']['isLiveContent']
-    except:
-        return False
-
-    return True if is_live == 'true' else False
-
-def make_stream(video_id):
-    url = f'https://youtube.com/watch?v={video_id}'
-    page = site_contents(url)
-
-    pattern = r'<script nonce="[-\w]+">var ytInitialPlayerResponse = (.*);</script>'
-    j = re.search(pattern, page)
-    data = json.loads(j.group(1)) if j else sys.exit('!!JSON LOADS ERROR!!')
-
-    status = 'live' if data['playabilityStatus']['status'] == 'OK' else 'scheduled'
-    video_id = data['videoDetails']['videoId']
-    title = data['videoDetails']['title']
-    description = data['videoDetails']['shortDescription']
-    thumbnail = data['videoDetails']['thumbnail']['thumbnails'][4]['url']
-    time_iso = None if status == 'live' else data['microformat']['playerMicroformatRenderer']['liveBroadcastDetails']['startTimestamp']
-
-    return Stream(status, video_id, title, description, thumbnail, time_iso)
-
-def video_length(video_id):
-    url = f'https://youtube.com/watch?v={video_id}'
-    page = site_contents(url)
-
-    pattern = r'<script nonce="[-\w]+">var ytInitialPlayerResponse = (.*);</script>'
-    j = re.search(pattern, page)
-    data = json.loads(j.group(1)) if j else sys.exit('!!JSON LOADS ERROR!!')
-
-    seconds = data['videoDetails']['lengthSeconds']
-    time_obj = timedelta(seconds=seconds)
-
-    return f'{f"{time_obj.days} days " if time_obj.days else ""}{time_obj}'
-
-
 def main():
     parser = argparse.ArgumentParser()
     group = parser.add_mutually_exclusive_group()
     group.add_argument('-handle', default=None, help='YouTube channel handle (starts with an "@")')
     group.add_argument('-id', default=None, help='YouTube channel ID (not the channel handle!!)')
-    group.add_argument('-url', default=None, help='The YouTube channel URL')
+    group.add_argument('-url', default=None, help='YouTube channel URL')
     arg = parser.parse_args()
 
     if arg.handle:
-        url = valid_url(arg.handle, 'handle')
+        channel_url = valid_url(arg.handle, 'handle')
     elif arg.id:
-        url = valid_url(arg.id, 'id')
+        channel_url = valid_url(arg.id, 'id')
     elif arg.url:
-        url = valid_url(arg.url, 'url')
+        channel_url = valid_url(arg.url, 'url')
     else:
         sys.exit(1)
 
-    data = get_data(url)
+    data = channel_data(channel_url)
     video_ids = get_ids(data)
-    streams = [make_stream(video_id) for video_id in video_ids]
+    streams = [stream_from_id(video_id) for video_id in video_ids]
+
     while True:
-        if not streams:
-            print(f'There are no streams scheduled or live')
+        print_status = True # bool flag for printing only once
         while not streams:
-            data = get_data(url)
+            if print_status:
+                print(f'There are currently no streams scheduled or live')
+                print_status = False
+            # time.sleep(5)
+            data = channel_data(channel_url)
             video_ids = get_ids(data)
-            streams = [make_stream(video_id) for video_id in video_ids]
-
-        for stream in streams:
-            print(f'{stream}\n')
-
+            streams = [stream_from_id(video_id) for video_id in video_ids]
+        
+        print_status = True
         while streams:
+            if print_status:
+                for stream in streams:
+                    print(f'{stream}\n')
+                print_status = False
             different_ids = list(set(video_ids).symmetric_difference(set(get_ids(data))))
-            for video_id in different_ids:
-                if is_stream(video_id):
-                    if video_id not in video_ids:
-                        video_ids.append(video_id)
-                        new_stream = make_stream(video_id)
-                        streams.append(new_stream)
-                        print('New stream!\n')
-                        print(f'{new_stream}\n')
-                elif video_id in video_ids:
+            for index, video_id in enumerate(different_ids):
+                if is_online(video_id):
+                    video_ids.append(video_id)
+                    new_stream = stream_from_id(video_id)
+                    streams.append(new_stream)
+                    print('New stream!\n')
+                    print(f'{new_stream}\n')
+                else:
                     print(f'Stream with ID "{video_id}" ended!')
-                    print(f'Stream time was {video_length(video_id)}')
                     video_ids.remove(video_id)
-                    for stream in streams:
-                        if stream.video_id == video_id:
-                            if stream.status == 'live':
-                                print(f'Stream time was {video_length(video_id)}')
-                            streams.remove(stream)
-
+                    if streams[index].status == 'live':
+                        print(f'Stream time was {video_length(video_id)}')
+                    streams.remove(streams[index])
+            
             for index, video_id in enumerate(video_ids):
-                stream_diff = make_stream(video_id)
-                if not streams[index].same_info(stream_diff):
+                stream_diff = stream_from_id(video_id)
+                if not streams[index].same_stream(stream_diff):
                     streams[index] = streams[index].update(stream_diff)
-
-            data = get_data(url)
+            # time.sleep(5)
+            data = channel_data(channel_url)  
 
 if __name__ == '__main__':
     main()
